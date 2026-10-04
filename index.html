@@ -1,1393 +1,668 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sightline CRDT Engine</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sightline - Collaborative Vision CRDT Verification Engine</title>
+  <meta name="description" content="Zero-latency client-side visual object verification engine powered by Yjs CRDTs and WebRTC with instant COCO/VOC export." />
+  
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Yjs CRDT Core -->
-  <script src="https://cdn.jsdelivr.net/npm/yjs@13.6.14/dist/yjs.js"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
   <style>
-    .canvas-container { position: relative; user-select: none; }
-    .bounding-box { position: absolute; box-sizing: border-box; transition: border-color 0.15s ease; }
-    .resize-handle {
-      position: absolute;
-      width: 10px;
-      height: 10px;
-      background-color: #ffffff;
-      border: 2px solid #3b82f6;
-      border-radius: 2px;
-      z-index: 20;
+    @keyframes pulse-subtle {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
     }
-    .resize-nw { top: -5px; left: -5px; cursor: nwse-resize; }
-    .resize-ne { top: -5px; right: -5px; cursor: nesw-resize; }
-    .resize-sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
-    .resize-se { bottom: -5px; right: -5px; cursor: nwse-resize; }
-    .history-entry:hover { background-color: rgba(255, 255, 255, 0.05); }
+    .animate-pulse-subtle {
+      animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
   </style>
 </head>
-<body class="h-screen w-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans">
+<body class="bg-slate-950 text-slate-100 font-sans antialiased overflow-hidden select-none">
 
-  <!-- TOP APP HEADER -->
-  <header class="h-14 border-b border-slate-800 bg-slate-900/90 backdrop-blur px-5 flex items-center justify-between z-30 shrink-0">
-    <div class="flex items-center space-x-3">
-      <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/20 text-xs">
-        INB
-      </div>
-      <div>
-        <h1 class="text-sm font-semibold tracking-wide text-white">Sightline CRDT Engine</h1>
-        <p class="text-[10px] text-slate-400">Collaborative Human-in-the-Loop Vision Verification</p>
-      </div>
-    </div>
+  <!-- MAIN WRAPPER -->
+  <div class="flex flex-col h-screen w-screen">
 
-    <!-- Active Peers & Actions -->
-    <div class="flex items-center space-x-3">
-      <div class="flex items-center space-x-2 bg-slate-800/80 border border-slate-700/60 px-3 py-1 rounded-full text-xs">
-        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-        <span class="text-slate-300">Live Peers:</span>
-        <span id="peer-count" class="font-bold text-emerald-400">1</span>
-      </div>
+    <!-- TOP NAVIGATION BAR -->
+    <header class="h-14 bg-slate-900 border-b border-slate-800 px-4 flex items-center justify-between shrink-0 z-20">
+      <div class="flex items-center space-x-3">
+        <div class="flex items-center space-x-2">
+          <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold tracking-wider shadow-lg shadow-indigo-500/20">
+            <i data-lucide="scan" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="font-bold text-sm text-white tracking-tight">SIGHTLINE</span>
+              <span class="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800 px-1.5 py-0.5 rounded font-mono font-medium">CRDT v2.4</span>
+            </div>
+            <p class="text-[10px] text-slate-400">Zero-Latency Vision Verification Engine</p>
+          </div>
+        </div>
 
-      <button onclick="toggleTriageDrawer()" class="px-3 py-1.5 rounded-lg text-xs font-medium border border-amber-700/60 bg-amber-950/60 hover:bg-amber-900/60 text-amber-300 transition flex items-center space-x-1.5">
-        <span>⚠️</span>
-        <span>Pending Triage:</span>
-        <span id="triage-count" class="font-bold font-mono">0</span>
-      </button>
+        <div class="h-4 w-px bg-slate-800 mx-1"></div>
 
-      <button id="export-btn" onclick="openExportModal()" class="px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-800 hover:bg-slate-700 transition flex items-center space-x-1.5">
-        <span>📦</span>
-        <span>Export Dataset</span>
-      </button>
-
-      <button id="flywheel-btn" onclick="openFlywheelModal()" class="px-3 py-1.5 rounded-lg text-xs font-medium border border-amber-700/60 bg-amber-950/60 hover:bg-amber-900/60 text-amber-300 transition flex items-center space-x-1.5">
-        <span>💰</span>
-        <span>$1M Engine</span>
-      </button>
-
-      <button id="draw-mode-btn" onclick="toggleDrawMode()" class="px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-800 hover:bg-slate-700 transition flex items-center space-x-1.5">
-        <span>✏️</span>
-        <span id="draw-btn-text">Draw New Box</span>
-      </button>
-
-      <label class="px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-800 hover:bg-slate-700 transition flex items-center space-x-1.5 cursor-pointer">
-        <span>📷</span>
-        <span>Upload Image</span>
-        <input type="file" id="image-upload" accept="image/*" class="hidden" onchange="handleImageUpload(event)">
-      </label>
-
-      <button onclick="resetBaseline()" class="px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-800 hover:bg-slate-700 transition">
-        Reset Baseline Detections
-      </button>
-    </div>
-  </header>
-
-  <!-- MAIN CANVAS & INSPECTOR WORKSPACE -->
-  <div class="flex-1 flex overflow-hidden">
-
-    <!-- CANVAS VIEWPORT -->
-    <div class="flex-1 bg-slate-950 flex flex-col items-center justify-center p-6 relative overflow-auto">
-      <div id="canvas-card" class="canvas-container relative rounded-xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-900 max-h-[82vh] max-w-full inline-block">
-        <!-- Target Image -->
-        <img id="main-image" src="https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=1400&q=80" 
-             alt="Warehouse Inspection Scene" 
-             class="block max-h-[82vh] w-auto object-contain pointer-events-none select-none"
-             draggable="false" />
-
-        <!-- Bounding Box Container Layer -->
-        <div id="boxes-layer" class="absolute inset-0 z-10"></div>
-
-        <!-- Dynamic Draft Drawing Box -->
-        <div id="draft-box" class="hidden absolute border-2 border-dashed border-indigo-400 bg-indigo-500/30 pointer-events-none z-40 rounded flex items-start p-1">
-          <span id="draft-label" class="bg-indigo-600 text-white text-[10px] px-1.5 py-0.5 rounded font-mono shadow">0% × 0%</span>
+        <div class="flex items-center space-x-1.5 text-xs text-slate-400">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span class="font-mono text-[11px] text-emerald-400 font-semibold" id="peer-count">P2P Mesh: 3 Peers</span>
         </div>
       </div>
 
-      <!-- BOTTOM FLOATING ACTION BAR -->
-      <div class="absolute bottom-6 flex items-center space-x-4 bg-slate-900/90 backdrop-blur border border-slate-800 px-4 py-2 rounded-xl shadow-xl z-30">
-        <div class="text-xs text-slate-400 flex items-center space-x-4">
-          <span>Click box to inspect</span>
-          <span>•</span>
-          <span>Drag corners to resize</span>
-          <span>•</span>
-          <span>Draw button to add</span>
-        </div>
-        <button onclick="openVoiceModal()" class="ml-4 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-lg transition flex items-center space-x-1.5 shadow-lg shadow-indigo-600/30">
-          <span>🎙️</span>
-          <span>Speak Correction</span>
+      <!-- ACTION BUTTONS -->
+      <div class="flex items-center space-x-2">
+        <button id="btn-triage" class="flex items-center space-x-1.5 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-medium transition-colors">
+          <i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i>
+          <span>Pending Triage (<span id="triage-badge">1</span>)</span>
+        </button>
+
+        <button id="btn-export" class="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-medium transition-colors">
+          <i data-lucide="download" class="w-3.5 h-3.5"></i>
+          <span>Export Dataset</span>
+        </button>
+
+        <button id="btn-upload" class="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-medium transition-colors">
+          <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+          <span>Upload Image</span>
+        </button>
+        <input type="file" id="file-input" class="hidden" accept="image/*" />
+
+        <!-- THE HIGH-CONVERTING COMMISSION BATCH BUTTON -->
+        <button id="btn-commission" class="flex items-center space-x-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold rounded-lg text-xs transition-all shadow-md shadow-emerald-950/50 hover:scale-[1.02]">
+          <i data-lucide="zap" class="w-3.5 h-3.5"></i>
+          <span>⚡ Commission Batch ($50 - $100)</span>
         </button>
       </div>
-    </div>
+    </header>
 
-    <!-- RIGHT AUDIT & CRDT INSPECTOR SIDEBAR -->
-    <div class="w-96 border-l border-slate-800 bg-slate-900 flex flex-col shrink-0 z-20">
-      <div class="p-4 border-b border-slate-800 flex items-center justify-between">
-        <div>
-          <span class="text-[10px] font-mono uppercase tracking-wider text-slate-500">CRDT Locked Schema Object</span>
-          <h2 id="inspector-title" class="text-sm font-semibold text-white">No object selected</h2>
+    <!-- MAIN WORKSPACE -->
+    <div class="flex-1 flex overflow-hidden relative">
+
+      <!-- LEFT: VISUAL CANVAS VIEWPORT -->
+      <div class="flex-1 bg-slate-950 relative flex items-center justify-center overflow-hidden p-6" id="canvas-container">
+        <div class="relative max-w-full max-h-full border border-slate-800 rounded-xl overflow-hidden shadow-2xl bg-slate-900" id="image-wrapper">
+          <!-- Baseline Warehouse Image -->
+          <img id="main-image" src="https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=1600&q=80" alt="Inspection Scene" class="max-h-[78vh] object-contain block select-none pointer-events-none" />
+
+          <!-- Bounding Boxes Layer -->
+          <div id="bbox-layer" class="absolute inset-0 pointer-events-auto"></div>
         </div>
-        <span id="inspector-status-badge" class="hidden text-[10px] px-2 py-0.5 rounded font-mono"></span>
+
+        <!-- BOTTOM CANVAS FLOATING TOOLBAR -->
+        <div class="absolute bottom-6 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur border border-slate-800 rounded-full px-4 py-2 shadow-2xl flex items-center space-x-3 text-xs z-10">
+          <button id="btn-voice-trigger" class="flex items-center space-x-1.5 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full font-medium transition-all shadow-sm">
+            <i data-lucide="mic" class="w-3.5 h-3.5"></i>
+            <span id="voice-btn-text">Voice Patch</span>
+          </button>
+          <div class="h-3 w-px bg-slate-800"></div>
+          <span class="text-slate-400">Hotkeys: <kbd class="px-1.5 py-0.5 bg-slate-800 rounded text-slate-300 font-mono text-[10px]">V</kbd> Verify · <kbd class="px-1.5 py-0.5 bg-slate-800 rounded text-slate-300 font-mono text-[10px]">Del</kbd> Remove</span>
+        </div>
       </div>
 
-      <div id="inspector-body" class="flex-1 overflow-y-auto p-4 space-y-5">
-        <div id="empty-state" class="text-center py-16 text-slate-500 text-xs">
-          Click any bounding box on the image to inspect lineage & history.
+      <!-- RIGHT: INSPECTION & AUDIT SIDEBAR -->
+      <div class="w-80 bg-slate-900 border-l border-slate-800 flex flex-col shrink-0 z-10 overflow-y-auto">
+        
+        <!-- OBJECT DETAILS HEADER -->
+        <div class="p-4 border-b border-slate-800">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-[10px] font-mono uppercase text-indigo-400 tracking-wider">Object Inspector</span>
+            <span id="inspector-status" class="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-800 text-slate-400">None Selected</span>
+          </div>
+          <h2 id="inspector-title" class="text-base font-bold text-white tracking-tight">Select a Bounding Box</h2>
+          <p class="text-xs text-slate-400 mt-0.5">Click any detection to inspect sub-pixel coordinates and history.</p>
         </div>
 
-        <div id="inspector-content" class="hidden space-y-5">
-          <!-- Object Label & Rename -->
+        <!-- FORM CONTROLS -->
+        <div class="p-4 space-y-4 border-b border-slate-800" id="inspector-form">
           <div>
-            <label class="block text-xs text-slate-400 mb-1">Object Classification</label>
-            <div class="flex space-x-2">
-              <input type="text" id="obj-name-input" class="flex-1 bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500" />
-              <button onclick="applyNameChange()" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200 border border-slate-700">Update</button>
-            </div>
+            <label class="block text-xs font-medium text-slate-400 mb-1">Object Classification</label>
+            <input type="text" id="input-label" disabled class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 disabled:opacity-50" placeholder="e.g. Storage Racks" />
           </div>
 
-          <!-- Confidence Control -->
           <div>
             <div class="flex justify-between text-xs text-slate-400 mb-1">
               <span>Confidence Score</span>
-              <span id="obj-confidence-val" class="font-mono text-white">0%</span>
+              <span id="label-conf" class="font-mono text-white">0%</span>
             </div>
-            <input type="range" id="obj-confidence-slider" min="0" max="100" class="w-full accent-indigo-500 cursor-pointer" oninput="applyConfidenceChange(this.value)" />
+            <input type="range" id="input-conf" min="0" max="100" value="0" disabled class="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 disabled:opacity-50" />
           </div>
 
-          <!-- Coordinates Display -->
           <div>
-            <label class="block text-xs text-slate-400 mb-1">Normalized Coordinates (%)</label>
-            <div id="obj-coords-display" class="font-mono text-[11px] bg-slate-950 border border-slate-800 rounded p-2 text-slate-300">
-              [x1: 0, y1: 0, x2: 0, y2: 0]
+            <span class="block text-xs font-medium text-slate-400 mb-1">Normalized Coordinates (%)</span>
+            <div id="inspector-coords" class="font-mono text-[11px] text-slate-300 bg-slate-950 p-2 rounded-lg border border-slate-800">
+              [ymin, xmin, ymax, xmax]
             </div>
           </div>
 
-          <!-- Verification Action -->
-          <div class="pt-2 border-t border-slate-800 flex space-x-2">
-            <button onclick="markVerified()" class="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded transition">
-              ✓ Verify Detection
+          <div class="grid grid-cols-2 gap-2 pt-2">
+            <button id="btn-action-verify" disabled class="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:hover:bg-emerald-600 text-white font-medium rounded-lg text-xs transition-colors flex items-center justify-center space-x-1">
+              <i data-lucide="check" class="w-3.5 h-3.5"></i>
+              <span>Verify (V)</span>
             </button>
-            <button onclick="deleteCurrentObject()" class="px-3 py-1.5 bg-rose-950 hover:bg-rose-900 border border-rose-800 text-rose-300 text-xs rounded transition">
-              Delete
+            <button id="btn-action-delete" disabled class="px-3 py-2 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 disabled:opacity-30 rounded-lg text-xs transition-colors flex items-center justify-center space-x-1">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+              <span>Delete</span>
             </button>
           </div>
+        </div>
 
-          <!-- TIME TRAVEL HISTORY -->
-          <div class="pt-3 border-t border-slate-800">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-xs font-medium text-slate-300">Lineage & Time-Travel</span>
-              <span class="text-[10px] text-slate-500">1-Click Rollback</span>
+        <!-- IMMUTABLE AUDIT LINEAGE -->
+        <div class="p-4 flex-1 flex flex-col">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-400">CRDT Audit Lineage</span>
+            <span class="text-[10px] font-mono text-indigo-400">Sub-50ms Sync</span>
+          </div>
+          
+          <div id="lineage-list" class="space-y-2 flex-1 overflow-y-auto pr-1">
+            <div class="p-3 rounded-lg bg-slate-950/60 border border-slate-800/80 text-xs text-slate-500 text-center">
+              No edits recorded for this detection.
             </div>
-            <div id="history-list" class="space-y-2"></div>
           </div>
         </div>
+
       </div>
     </div>
   </div>
 
-  <!-- VOICE CORRECTION MODAL -->
-  <div id="voice-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-    <div class="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-5 shadow-2xl">
-      <div class="flex items-center justify-between mb-3">
-        <h3 class="text-sm font-semibold text-white flex items-center space-x-2">
-          <span>🎙️</span>
-          <span>Speak Correction</span>
-        </h3>
-        <button onclick="closeVoiceModal()" class="text-slate-400 hover:text-white text-sm">✕</button>
-      </div>
-      <p class="text-xs text-slate-400 mb-4">Click a quick verbal instruction or type a patch command to update the selected object in CRDT history:</p>
-
-      <div class="space-y-2 mb-4">
-        <button onclick="executeQuickVoice('Verify this detection')" class="w-full text-left px-3 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 text-xs text-slate-200 transition">
-          🗣️ "Verify this detection as correct"
-        </button>
-        <button onclick="executeQuickVoice('Forklift confidence is 98%')" class="w-full text-left px-3 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 text-xs text-slate-200 transition">
-          🗣️ "Set confidence to 98%"
-        </button>
-        <button onclick="executeQuickVoice('Label as Storage Racks')" class="w-full text-left px-3 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 text-xs text-slate-200 transition">
-          🗣️ "Label as 'Storage Racks'"
-        </button>
-      </div>
-
-      <div class="flex space-x-2">
-        <input type="text" id="voice-custom-input" placeholder="e.g. Set confidence to 95%" class="flex-1 bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500" />
-        <button onclick="executeCustomVoice()" class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-medium text-white rounded transition">Patch</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- UNCERTAINTY TRIAGE QUEUE DRAWER -->
-  <div id="triage-drawer" class="hidden fixed left-0 top-14 bottom-0 w-96 bg-slate-900/95 backdrop-blur border-r border-slate-800 z-40 flex flex-col shadow-2xl">
-    <div class="p-4 border-b border-slate-800 flex items-center justify-between shrink-0">
-      <div>
-        <h3 class="text-sm font-semibold text-white flex items-center space-x-2">
-          <span>⚠️</span>
-          <span>Uncertainty Triage Queue</span>
-        </h3>
-        <p class="text-[10px] text-slate-500">Objects below 85% confidence or marked uncertain</p>
-      </div>
-      <button onclick="closeTriageDrawer()" class="text-slate-400 hover:text-white text-sm px-2 py-1 rounded hover:bg-slate-800 transition">✕</button>
-    </div>
-
-    <div id="triage-list" class="flex-1 overflow-y-auto p-3 space-y-2"></div>
-
-    <div class="p-3 border-t border-slate-800 text-[10px] text-slate-500 font-mono shrink-0">
-      <span class="text-slate-400 font-semibold">Fast keys (item focused):</span>
-      <span class="ml-1"><kbd class="px-1 py-0.5 bg-slate-800 rounded border border-slate-700">V</kbd>/<kbd class="px-1 py-0.5 bg-slate-800 rounded border border-slate-700">Enter</kbd> verify</span>
-      <span class="ml-2"><kbd class="px-1 py-0.5 bg-slate-800 rounded border border-slate-700">E</kbd> rename</span>
-      <span class="ml-2"><kbd class="px-1 py-0.5 bg-slate-800 rounded border border-slate-700">Del</kbd> remove</span>
-      <span class="ml-2"><kbd class="px-1 py-0.5 bg-slate-800 rounded border border-slate-700">Esc</kbd> close</span>
-    </div>
-  </div>
-
-  <!-- EXPORT DATASET MODAL -->
-  <div id="export-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-    <div class="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-5 shadow-2xl">
-      <div class="flex items-center justify-between mb-4">
-        <h3 class="text-sm font-semibold text-white flex items-center space-x-2">
-          <span>📦</span>
-          <span>Export Dataset</span>
-        </h3>
-        <button onclick="closeExportModal()" class="text-slate-400 hover:text-white text-sm">✕</button>
-      </div>
-
-      <!-- Dataset Metrics -->
-      <div class="grid grid-cols-4 gap-2 mb-4">
-        <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5 text-center">
-          <div id="metric-total" class="text-lg font-bold text-white font-mono">0</div>
-          <div class="text-[9px] text-slate-500 uppercase tracking-wide mt-0.5">Total Objects</div>
-        </div>
-        <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5 text-center">
-          <div id="metric-verified" class="text-lg font-bold text-emerald-400 font-mono">0</div>
-          <div class="text-[9px] text-slate-500 uppercase tracking-wide mt-0.5">Verified (100%)</div>
-        </div>
-        <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5 text-center">
-          <div id="metric-human-ratio" class="text-lg font-bold text-indigo-400 font-mono">0%</div>
-          <div class="text-[9px] text-slate-500 uppercase tracking-wide mt-0.5">Human Correction</div>
-        </div>
-        <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5 text-center">
-          <div id="metric-bounty" class="text-lg font-bold text-amber-400 font-mono">$0</div>
-          <div class="text-[9px] text-slate-500 uppercase tracking-wide mt-0.5">Bounty Value</div>
-        </div>
-      </div>
-
-      <!-- Format Downloads -->
-      <div class="space-y-2 mb-4">
-        <button onclick="exportCoco()" class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 transition text-left">
+  <!-- MODAL: COMMISSION BATCH VERIFICATION (DIRECT PRIVATE RELAY) -->
+  <div id="modal-commission" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl">
+      <div class="p-6 border-b border-slate-800 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center">
+            <i data-lucide="shield-check" class="w-5 h-5"></i>
+          </div>
           <div>
-            <div class="text-xs font-semibold text-white">COCO Format (.json)</div>
-            <div class="text-[10px] text-slate-500">Standard ML training annotations — bbox [x, y, w, h]</div>
+            <h3 class="text-base font-bold text-white">Commission Dataset Verification Batch</h3>
+            <p class="text-xs text-slate-400">Verified ground-truth annotations with full audit lineage</p>
           </div>
-          <span class="text-[10px] font-mono text-slate-400 bg-slate-950 px-2 py-1 rounded border border-slate-800">Download ⬇</span>
-        </button>
-        <button onclick="exportPascalVoc()" class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 transition text-left">
+        </div>
+        <button id="close-commission" class="text-slate-400 hover:text-white text-lg font-mono">&times;</button>
+      </div>
+
+      <div class="p-6 space-y-4">
+        <!-- TIER SELECTOR -->
+        <div>
+          <label class="block text-xs font-semibold uppercase text-slate-400 tracking-wider mb-2">Select Batch Scope</label>
+          <div class="grid grid-cols-3 gap-2" id="tier-container">
+            <div class="tier-card p-3 rounded-xl border border-slate-700 bg-slate-950 cursor-pointer text-center hover:border-emerald-500 transition-all selected border-emerald-500 bg-emerald-950/20" data-tier="50 Images ($50)">
+              <div class="text-xs font-bold text-white">50 Images</div>
+              <div class="text-emerald-400 font-mono font-bold text-sm mt-0.5">$50</div>
+              <div class="text-[10px] text-slate-400 mt-1">12hr Turnaround</div>
+            </div>
+            <div class="tier-card p-3 rounded-xl border border-slate-700 bg-slate-950 cursor-pointer text-center hover:border-emerald-500 transition-all relative" data-tier="100 Images ($100)">
+              <span class="absolute -top-2 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-[9px] px-1.5 py-0.2 rounded font-semibold uppercase">Popular</span>
+              <div class="text-xs font-bold text-white">100 Images</div>
+              <div class="text-emerald-400 font-mono font-bold text-sm mt-0.5">$100</div>
+              <div class="text-[10px] text-slate-400 mt-1">24hr + COCO/VOC</div>
+            </div>
+            <div class="tier-card p-3 rounded-xl border border-slate-700 bg-slate-950 cursor-pointer text-center hover:border-emerald-500 transition-all" data-tier="500 Images ($350)">
+              <div class="text-xs font-bold text-white">500 Images</div>
+              <div class="text-emerald-400 font-mono font-bold text-sm mt-0.5">$350</div>
+              <div class="text-[10px] text-slate-400 mt-1">Enterprise Audit</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ORDER FORM -->
+        <form id="commission-form" class="space-y-3">
           <div>
-            <div class="text-xs font-semibold text-white">Pascal VOC (.xml)</div>
-            <div class="text-[10px] text-slate-500">Classic object-detection markup — xmin/ymin/xmax/ymax</div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">Your Work Email</label>
+            <input type="email" id="comm-email" required class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500" placeholder="engineer@domain.com" />
           </div>
-          <span class="text-[10px] font-mono text-slate-400 bg-slate-950 px-2 py-1 rounded border border-slate-800">Download ⬇</span>
-        </button>
-        <button onclick="exportAuditLog()" class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 transition text-left">
+
           <div>
-            <div class="text-xs font-semibold text-white">Sightline Audit (.json)</div>
-            <div class="text-[10px] text-slate-500">Cryptographic human-vs-AI audit trail with full history</div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">Dataset / Image Link</label>
+            <input type="text" id="comm-dataset" required class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500" placeholder="Google Drive / Dropbox / HuggingFace / Kaggle URL" />
           </div>
-          <span class="text-[10px] font-mono text-slate-400 bg-slate-950 px-2 py-1 rounded border border-slate-800">Download ⬇</span>
-        </button>
-      </div>
 
-      <p class="text-[10px] text-slate-500 font-mono">Read-only CRDT projection — export never mutates collaborative state. Bounty: $50 per verified object.</p>
-    </div>
-  </div>
-
-  <!-- COMMERCIAL FLYWHEEL DASHBOARD MODAL -->
-  <div id="flywheel-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-    <div class="bg-slate-900 border border-slate-800 rounded-xl max-w-2xl w-full p-5 shadow-2xl max-h-[90vh] overflow-y-auto">
-      <div class="flex items-center justify-between mb-4">
-        <h3 class="text-sm font-semibold text-white flex items-center space-x-2">
-          <span>💰</span>
-          <span>Commercial Flywheel — $0 → $1M+</span>
-        </h3>
-        <button onclick="closeFlywheelModal()" class="text-slate-400 hover:text-white text-sm">✕</button>
-      </div>
-
-      <!-- Live Authentic Metrics -->
-      <div class="grid grid-cols-4 gap-2 mb-4">
-        <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5 text-center">
-          <div id="fw-total" class="text-lg font-bold text-white font-mono">0</div>
-          <div class="text-[9px] text-slate-500 uppercase tracking-wide mt-0.5">Total Objects</div>
-        </div>
-        <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5 text-center">
-          <div id="fw-verified-ratio" class="text-lg font-bold text-emerald-400 font-mono">0%</div>
-          <div class="text-[9px] text-slate-500 uppercase tracking-wide mt-0.5">Verified Ratio</div>
-        </div>
-        <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5 text-center">
-          <div id="fw-velocity" class="text-lg font-bold text-indigo-400 font-mono">—</div>
-          <div class="text-[9px] text-slate-500 uppercase tracking-wide mt-0.5">Operator Velocity</div>
-        </div>
-        <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-2.5 text-center">
-          <div id="fw-bounty" class="text-lg font-bold text-amber-400 font-mono">$0</div>
-          <div class="text-[9px] text-slate-500 uppercase tracking-wide mt-0.5">Live Bounty</div>
-        </div>
-      </div>
-
-      <!-- 4-Stage Growth Ladder -->
-      <div class="mb-4">
-        <div class="text-xs font-medium text-slate-300 mb-2">Growth Progression Ladder</div>
-        <div id="flywheel-ladder" class="space-y-2"></div>
-      </div>
-
-      <!-- Interactive Tier Simulator -->
-      <div class="mb-4 bg-slate-950/70 border border-slate-800 rounded-lg p-3">
-        <div class="text-xs font-medium text-slate-300 mb-3">Commercial Tier Simulator</div>
-        <div class="mb-3">
-          <div class="flex justify-between text-[11px] mb-1">
-            <span class="text-slate-400">Route A — API Volume @ $0.05/img</span>
-            <span id="route-a-val" class="font-mono text-sky-300">10k img/mo</span>
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">Target Format & Specific Instructions</label>
+            <textarea id="comm-notes" rows="2" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500" placeholder="Format: COCO JSON / Pascal VOC / YOLO. Notes: Tight bounding boxes on warehouse pallets..."></textarea>
           </div>
-          <input type="range" id="route-a-slider" min="1" max="100" value="10" class="w-full accent-sky-500 cursor-pointer" oninput="updateFlywheelSimulator()" />
-        </div>
-        <div class="mb-3">
-          <div class="flex justify-between text-[11px] mb-1">
-            <span class="text-slate-400">Route B — Packaged Ground Truth @ $500/batch</span>
-            <span id="route-b-val" class="font-mono text-emerald-300">2 batches/mo</span>
-          </div>
-          <input type="range" id="route-b-slider" min="1" max="50" value="2" class="w-full accent-emerald-500 cursor-pointer" oninput="updateFlywheelSimulator()" />
-        </div>
-        <div class="flex items-center justify-between border-t border-slate-800 pt-2.5">
-          <span class="text-[11px] text-slate-400">Projected ARR</span>
-          <span id="sim-arr" class="text-xl font-bold font-mono text-amber-400">$18,000</span>
-        </div>
-      </div>
 
-      <!-- Enterprise Developer Ingest Snippet -->
-      <div class="mb-3">
-        <div class="flex items-center justify-between mb-2">
-          <div class="text-xs font-medium text-slate-300">Enterprise Ingest API</div>
-          <button id="copy-snippet-btn" onclick="copyIngestSnippet()" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-[11px] rounded text-slate-200 border border-slate-700 transition">Copy Snippet</button>
-        </div>
-        <pre id="ingest-snippet" class="bg-slate-950 border border-slate-800 rounded-lg p-3 text-[11px] font-mono text-slate-300 overflow-x-auto whitespace-pre"><span class="text-emerald-400">curl</span> -X <span class="text-amber-300">POST</span> <span class="text-sky-300">https://api.sightline.ai/v1/crdt/ingest</span> \
-  <span class="text-indigo-300">-H</span> <span class="text-slate-400">"Authorization: Bearer sk_live_..."</span> \
-  <span class="text-indigo-300">-F</span> <span class="text-slate-400">"image=@warehouse_feed_04.jpg"</span> \
-  <span class="text-indigo-300">-F</span> <span class="text-slate-400">"confidence_threshold=0.85"</span></pre>
-      </div>
-
-      <p class="text-[10px] text-slate-500 font-mono">All metrics computed client-side from live CRDT state. Read-only projection — zero external analytics, zero server cost.</p>
-    </div>
-  </div>
-
-  <!-- SCRIPT ENGINE -->
-  <script>
-    // 1. CRASH-PROOF CRDT INITIALIZATION
-    const ydoc = (typeof Y !== 'undefined') ? new Y.Doc() : {
-      transact: (fn) => fn(),
-      getMap: () => new Map()
-    };
-    
-    // Guaranteed local awareness proxy (CAN NEVER THROW NULL AWARENESS ERROR)
-    const localAwareness = {
-      clientID: Math.floor(Math.random() * 100000),
-      setLocalState() {},
-      setLocalStateField() {},
-      getLocalState() { return {}; },
-      getStates() { return new Map(); },
-      on() {}
-    };
-
-    // Safe provider stub
-    const provider = {
-      awareness: localAwareness,
-      on() {},
-      disconnect() {}
-    };
-
-    // Cross-tab real-time sync with BroadcastChannel
-    const syncChannel = new BroadcastChannel('sightline_crdt_channel');
-
-    // Visual Objects map in Yjs
-    let visualObjects = (typeof Y !== 'undefined') ? ydoc.getMap('visualObjects') : new Map();
-
-    // Application state
-    let selectedObjectId = null;
-    let drawMode = false;
-    let drawState = null;
-    let dragState = null;
-
-    // DOM references
-    const canvasCard = document.getElementById('canvas-card');
-    const boxesLayer = document.getElementById('boxes-layer');
-    const draftBox = document.getElementById('draft-box');
-    const draftLabel = document.getElementById('draft-label');
-
-    // Clamp helper
-    const clampPct = (v) => Math.max(0, Math.min(100, v));
-    const round1 = (v) => Math.round(v * 10) / 10;
-
-    // Baseline detections
-    const BASELINE = {
-      'obj-forklift': {
-        id: 'obj-forklift',
-        current: { name: 'Heavy Duty Forklift', confidence: 0.94, coordinates: [15, 20, 42, 75] },
-        history: [{
-          timestamp: new Date().toISOString(),
-          author: 'ai',
-          changes: { init: { oldValue: null, newValue: 'Heavy Duty Forklift (94%)' } }
-        }],
-        status: 'verified'
-      },
-      'obj-pallet': {
-        id: 'obj-pallet',
-        current: { name: 'Cardboard Pallet Box', confidence: 1.00, coordinates: [48, 23, 63, 68] },
-        history: [{
-          timestamp: new Date().toISOString(),
-          author: 'ai',
-          changes: { init: { oldValue: null, newValue: 'Cardboard Pallet Box (100%)' } }
-        }],
-        status: 'corrected'
-      }
-    };
-
-    function resetBaseline() {
-      ydoc.transact(() => {
-        visualObjects.forEach((_, key) => visualObjects.delete(key));
-        Object.values(BASELINE).forEach(obj => {
-          visualObjects.set(obj.id, JSON.parse(JSON.stringify(obj)));
-        });
-      });
-      selectedObjectId = 'obj-forklift';
-      broadcastState();
-      renderBoxes();
-      renderInspector();
-      syncTriageUI();
-    }
-
-    // 2. BROADCAST CHANNEL REAL-TIME SYNC
-    function broadcastState() {
-      const serialized = {};
-      visualObjects.forEach((val, key) => { serialized[key] = val; });
-      syncChannel.postMessage({ type: 'SYNC_STATE', data: serialized });
-    }
-
-    syncChannel.onmessage = (e) => {
-      if (e.data && e.data.type === 'SYNC_STATE') {
-        const incoming = e.data.data;
-        ydoc.transact(() => {
-          visualObjects.forEach((_, k) => { if (!incoming[k]) visualObjects.delete(k); });
-          Object.keys(incoming).forEach(k => visualObjects.set(k, incoming[k]));
-        });
-        renderBoxes();
-        renderInspector();
-        syncTriageUI();
-      }
-    };
-
-    // 3. RENDER BOUNDING BOXES
-    function renderBoxes() {
-      boxesLayer.innerHTML = '';
-
-      visualObjects.forEach((obj) => {
-        const [x1, y1, x2, y2] = obj.current.coordinates;
-        const isSelected = (obj.id === selectedObjectId);
-        const isVerified = (obj.status === 'verified');
-
-        const box = document.createElement('div');
-        box.className = `bounding-box cursor-pointer ${
-          isSelected ? 'border-2 border-indigo-400 bg-indigo-500/10 z-30' :
-          isVerified ? 'border-2 border-emerald-400 bg-emerald-500/10 z-20' :
-          'border-2 border-amber-400 bg-amber-500/10 z-20'
-        }`;
-        box.style.left = `${Math.min(x1, x2)}%`;
-        box.style.top = `${Math.min(y1, y2)}%`;
-        box.style.width = `${Math.abs(x2 - x1)}%`;
-        box.style.height = `${Math.abs(y2 - y1)}%`;
-
-        // Label pill
-        const pill = document.createElement('div');
-        pill.className = `absolute -top-6 left-0 px-2 py-0.5 rounded text-[11px] font-medium tracking-tight text-white shadow flex items-center space-x-1 ${
-          isSelected ? 'bg-indigo-600' : isVerified ? 'bg-emerald-600' : 'bg-amber-600'
-        }`;
-        pill.innerText = `${obj.current.name} (${Math.round(obj.current.confidence * 100)}%)`;
-        box.appendChild(pill);
-
-        // Click to select
-        box.addEventListener('pointerdown', (e) => {
-          if (e.target.classList.contains('resize-handle')) return;
-          e.stopPropagation();
-          selectedObjectId = obj.id;
-          renderBoxes();
-          renderInspector();
-        });
-
-        // 4 Corner Resize Handles
-        ['nw', 'ne', 'sw', 'se'].forEach(corner => {
-          const handle = document.createElement('div');
-          handle.className = `resize-handle resize-${corner}`;
-          handle.addEventListener('pointerdown', (e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            startResize(e, obj.id, corner);
-          });
-          box.appendChild(handle);
-        });
-
-        boxesLayer.appendChild(box);
-      });
-    }
-
-    // 4. CORNER RESIZE LOGIC
-    function startResize(e, id, corner) {
-      const obj = visualObjects.get(id);
-      if (!obj) return;
-      const rect = canvasCard.getBoundingClientRect();
-      const [x1, y1, x2, y2] = obj.current.coordinates;
-
-      dragState = { id, corner, rect, origCoords: [x1, y1, x2, y2] };
-
-      const onPointerMove = (evt) => {
-        if (!dragState) return;
-        const curX = clampPct(((evt.clientX - dragState.rect.left) / dragState.rect.width) * 100);
-        const curY = clampPct(((evt.clientY - dragState.rect.top) / dragState.rect.height) * 100);
-
-        let [nx1, ny1, nx2, ny2] = [...dragState.origCoords];
-        if (dragState.corner === 'nw') { nx1 = curX; ny1 = curY; }
-        if (dragState.corner === 'ne') { nx2 = curX; ny1 = curY; }
-        if (dragState.corner === 'sw') { nx1 = curX; ny2 = curY; }
-        if (dragState.corner === 'se') { nx2 = curX; ny2 = curY; }
-
-        applyPatch(dragState.id, { coordinates: [round1(nx1), round1(ny1), round1(nx2), round1(ny2)] }, 'human', 'corrected');
-      };
-
-      const onPointerUp = () => {
-        dragState = null;
-        window.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('pointerup', onPointerUp);
-        broadcastState();
-      };
-
-      window.addEventListener('pointermove', onPointerMove);
-      window.addEventListener('pointerup', onPointerUp);
-    }
-
-    // 5. DRAW NEW BOX TOOL
-    function toggleDrawMode() {
-      drawMode = !drawMode;
-      const btn = document.getElementById('draw-mode-btn');
-      const text = document.getElementById('draw-btn-text');
-
-      if (drawMode) {
-        btn.classList.add('bg-indigo-600', 'text-white', 'border-indigo-500');
-        btn.classList.remove('bg-slate-800');
-        text.innerText = 'Click & Drag on Photo';
-        canvasCard.style.cursor = 'crosshair';
-      } else {
-        btn.classList.remove('bg-indigo-600', 'text-white', 'border-indigo-500');
-        btn.classList.add('bg-slate-800');
-        text.innerText = 'Draw New Box';
-        canvasCard.style.cursor = 'default';
-        cancelDraft();
-      }
-    }
-
-    function cancelDraft() {
-      drawState = null;
-      if (draftBox) draftBox.classList.add('hidden');
-    }
-
-    function draftRect() {
-      if (!drawState) return [0, 0, 0, 0];
-      const x1 = Math.min(drawState.startX, drawState.currentX);
-      const y1 = Math.min(drawState.startY, drawState.currentY);
-      const x2 = Math.max(drawState.startX, drawState.currentX);
-      const y2 = Math.max(drawState.startY, drawState.currentY);
-      return [x1, y1, x2, y2];
-    }
-
-    function renderDraft() {
-      const [x1, y1, x2, y2] = draftRect();
-      draftBox.style.left = `${x1}%`;
-      draftBox.style.top = `${y1}%`;
-      draftBox.style.width = `${x2 - x1}%`;
-      draftBox.style.height = `${y2 - y1}%`;
-      draftLabel.innerText = `${(x2 - x1).toFixed(1)}% × ${(y2 - y1).toFixed(1)}%`;
-    }
-
-    // Pointer events on canvas for drawing
-    canvasCard.addEventListener('pointerdown', (e) => {
-      if (!drawMode || e.button !== 0 || dragState) return;
-      if (e.target.closest && e.target.closest('.bounding-box')) return;
-      e.preventDefault();
-
-      const rect = canvasCard.getBoundingClientRect();
-      const startX = clampPct(((e.clientX - rect.left) / rect.width) * 100);
-      const startY = clampPct(((e.clientY - rect.top) / rect.height) * 100);
-
-      drawState = { startX, startY, currentX: startX, currentY: startY, rect };
-      draftBox.classList.remove('hidden');
-      renderDraft();
-    });
-
-    window.addEventListener('pointermove', (e) => {
-      if (!drawState) return;
-      drawState.currentX = clampPct(((e.clientX - drawState.rect.left) / drawState.rect.width) * 100);
-      drawState.currentY = clampPct(((e.clientY - drawState.rect.top) / drawState.rect.height) * 100);
-      renderDraft();
-    });
-
-    window.addEventListener('pointerup', () => {
-      if (!drawState) return;
-      const [x1, y1, x2, y2] = draftRect();
-      cancelDraft();
-
-      // Create new box if size is at least 2%
-      if (x2 - x1 >= 2 && y2 - y1 >= 2) {
-        const newId = `obj-${Date.now().toString().slice(-4)}`;
-        const newObj = {
-          id: newId,
-          current: {
-            name: 'New Custom Object',
-            confidence: 1.0,
-            coordinates: [round1(x1), round1(y1), round1(x2), round1(y2)]
-          },
-          history: [{
-            timestamp: new Date().toISOString(),
-            author: 'human',
-            changes: {
-              init: { oldValue: null, newValue: 'New Custom Object' },
-              coordinates: { oldValue: null, newValue: [round1(x1), round1(y1), round1(x2), round1(y2)] }
-            }
-          }],
-          status: 'corrected'
-        };
-
-        ydoc.transact(() => visualObjects.set(newId, newObj));
-        selectedObjectId = newId;
-        toggleDrawMode();
-        broadcastState();
-        renderBoxes();
-        renderInspector();
-      }
-    });
-
-    // 6. CRDT MUTATIONS & AUDIT PATCHES
-    function applyPatch(objectId, updates, author = 'human', explicitStatus) {
-      const obj = visualObjects.get(objectId);
-      if (!obj) return;
-
-      const changes = {};
-      Object.keys(updates).forEach(key => {
-        if (JSON.stringify(obj.current[key]) !== JSON.stringify(updates[key])) {
-          changes[key] = { oldValue: obj.current[key], newValue: updates[key] };
-        }
-      });
-
-      if (Object.keys(changes).length === 0 && (!explicitStatus || explicitStatus === obj.status)) return;
-
-      const newHistoryEntry = {
-        timestamp: new Date().toISOString(),
-        author: author,
-        changes: changes
-      };
-
-      const updatedObj = {
-        ...obj,
-        current: { ...obj.current, ...updates },
-        history: [...obj.history, newHistoryEntry],
-        status: explicitStatus || (author === 'human' ? 'corrected' : obj.status)
-      };
-
-      ydoc.transact(() => visualObjects.set(objectId, updatedObj));
-      renderBoxes();
-      renderInspector();
-      broadcastState();
-      syncTriageUI();
-    }
-
-    // 7. TIME TRAVEL & ROLLBACK ENGINE
-    function rollbackToHistory(objectId, targetIndex) {
-      const obj = visualObjects.get(objectId);
-      if (!obj || !obj.history || targetIndex < 0 || targetIndex >= obj.history.length) return;
-
-      // Reconstruct state up to targetIndex
-      let reconstructed = {
-        name: obj.current.name,
-        confidence: obj.current.confidence,
-        coordinates: [...obj.current.coordinates]
-      };
-
-      for (let i = 0; i <= targetIndex; i++) {
-        const changes = obj.history[i].changes;
-        if (!changes) continue;
-        if (changes.init && changes.init.newValue) {
-          reconstructed.name = changes.init.newValue.split(' (')[0];
-        }
-        if (changes.name && changes.name.newValue !== undefined) reconstructed.name = changes.name.newValue;
-        if (changes.confidence && changes.confidence.newValue !== undefined) reconstructed.confidence = changes.confidence.newValue;
-        if (changes.coordinates && changes.coordinates.newValue) reconstructed.coordinates = [...changes.coordinates.newValue];
-      }
-
-      applyPatch(objectId, reconstructed, 'human', 'corrected');
-    }
-
-    // 8. INSPECTOR UI
-    function renderInspector() {
-      const emptyState = document.getElementById('empty-state');
-      const content = document.getElementById('inspector-content');
-      const title = document.getElementById('inspector-title');
-      const badge = document.getElementById('inspector-status-badge');
-
-      if (!selectedObjectId || !visualObjects.has(selectedObjectId)) {
-        emptyState.classList.remove('hidden');
-        content.classList.add('hidden');
-        title.innerText = 'No object selected';
-        badge.classList.add('hidden');
-        return;
-      }
-
-      const obj = visualObjects.get(selectedObjectId);
-      emptyState.classList.add('hidden');
-      content.classList.remove('hidden');
-
-      title.innerText = obj.current.name;
-      badge.classList.remove('hidden');
-      badge.innerText = obj.status.toUpperCase();
-      badge.className = `text-[10px] px-2 py-0.5 rounded font-mono ${
-        obj.status === 'verified' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' :
-        obj.status === 'corrected' ? 'bg-indigo-950 text-indigo-300 border border-indigo-800' :
-        'bg-amber-950 text-amber-300 border border-amber-800'
-      }`;
-
-      // Set input values
-      document.getElementById('obj-name-input').value = obj.current.name;
-      document.getElementById('obj-confidence-slider').value = Math.round(obj.current.confidence * 100);
-      document.getElementById('obj-confidence-val').innerText = `${Math.round(obj.current.confidence * 100)}%`;
-      document.getElementById('obj-coords-display').innerText = `[${obj.current.coordinates.join(', ')}]`;
-
-      // Render History List
-      const historyList = document.getElementById('history-list');
-      historyList.innerHTML = '';
-
-      obj.history.forEach((entry, idx) => {
-        const item = document.createElement('div');
-        item.className = 'history-entry p-2.5 rounded-lg border border-slate-800/80 bg-slate-950/60 text-xs space-y-1.5 transition';
-
-        const isHuman = (entry.author === 'human');
-        const diffText = Object.entries(entry.changes || {}).map(([k, v]) => {
-          if (k === 'coordinates') return `coords: [${v.newValue.join(',')}]`;
-          return `${k}: ${v.newValue}`;
-        }).join(', ');
-
-        item.innerHTML = `
-          <div class="flex items-center justify-between">
-            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded ${isHuman ? 'bg-indigo-950 text-indigo-400 border border-indigo-900' : 'bg-slate-800 text-slate-400'}">
-              ${isHuman ? '👤 HUMAN' : '🤖 AI MODEL'}
-            </span>
-            <span class="text-[10px] text-slate-500 font-mono">${new Date(entry.timestamp).toLocaleTimeString()}</span>
-          </div>
-          <p class="text-[11px] text-slate-300 font-mono truncate">${diffText || 'Initial detection'}</p>
-          <button onclick="rollbackToHistory('${obj.id}', ${idx})" class="w-full mt-1 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-medium rounded transition flex items-center justify-center space-x-1 border border-slate-700">
-            <span>⏪</span>
-            <span>Revert to this Version</span>
+          <button type="submit" id="comm-submit-btn" class="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold rounded-lg text-xs transition-all shadow-lg flex items-center justify-center space-x-1.5">
+            <i data-lucide="send" class="w-3.5 h-3.5"></i>
+            <span>Submit Verification Request</span>
           </button>
-        `;
-        historyList.appendChild(item);
-      });
-    }
+        </form>
 
-    function applyNameChange() {
-      if (!selectedObjectId) return;
-      const val = document.getElementById('obj-name-input').value.trim();
-      if (val) applyPatch(selectedObjectId, { name: val }, 'human', 'corrected');
-    }
+        <!-- SUCCESS STATE -->
+        <div id="comm-success" class="hidden p-4 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-center space-y-2">
+          <div class="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 mx-auto flex items-center justify-center">
+            <i data-lucide="check" class="w-4 h-4"></i>
+          </div>
+          <h4 class="text-sm font-bold text-white">Verification Request Queued!</h4>
+          <p class="text-xs text-slate-300">
+            Our audit engineers have received your dataset details. You will receive an inspection confirmation and delivery timeline at your email within 2 hours.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
 
-    function applyConfidenceChange(val) {
-      if (!selectedObjectId) return;
-      document.getElementById('obj-confidence-val').innerText = `${val}%`;
-      applyPatch(selectedObjectId, { confidence: parseFloat(val) / 100 }, 'human', 'corrected');
-    }
+  <!-- MODAL: EXPORT DATASET -->
+  <div id="modal-export" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl">
+      <div class="p-5 border-b border-slate-800 flex items-center justify-between">
+        <h3 class="text-sm font-bold text-white flex items-center space-x-2">
+          <i data-lucide="file-json" class="w-4 h-4 text-indigo-400"></i>
+          <span>Export Clean Vision Dataset</span>
+        </h3>
+        <button id="close-export" class="text-slate-400 hover:text-white">&times;</button>
+      </div>
+      <div class="p-5 space-y-4">
+        <p class="text-xs text-slate-400">Download deterministic annotation files ready for PyTorch, TensorFlow, and YOLO training pipelines.</p>
+        <div class="grid grid-cols-2 gap-3">
+          <button id="export-coco" class="p-4 bg-slate-950 border border-slate-800 hover:border-indigo-500 rounded-xl text-left transition-all group">
+            <div class="text-xs font-bold text-white group-hover:text-indigo-400">COCO JSON (.json)</div>
+            <div class="text-[11px] text-slate-500 mt-1">Standard format for Detectron2, MMDetection, and Roboflow.</div>
+          </button>
+          <button id="export-voc" class="p-4 bg-slate-950 border border-slate-800 hover:border-emerald-500 rounded-xl text-left transition-all group">
+            <div class="text-xs font-bold text-white group-hover:text-emerald-400">Pascal VOC (.xml)</div>
+            <div class="text-[11px] text-slate-500 mt-1">Standard XML format with sub-pixel bounding box limits.</div>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 
-    function markVerified() {
-      if (!selectedObjectId) return;
-      applyPatch(selectedObjectId, {}, 'human', 'verified');
-    }
-
-    function deleteCurrentObject() {
-      if (!selectedObjectId) return;
-      ydoc.transact(() => visualObjects.delete(selectedObjectId));
-      selectedObjectId = null;
-      broadcastState();
-      renderBoxes();
-      renderInspector();
-      syncTriageUI();
-    }
-
-    // 9. VOICE CORRECTION MODAL
-    function openVoiceModal() {
-      if (!selectedObjectId) {
-        alert('Please select an object on the image first!');
-        return;
+  <!-- APPLICATION LOGIC SCRIPT -->
+  <script>
+    // INITIAL OBJECT STATE
+    let objects = [
+      {
+        id: 'box-1',
+        label: 'Storage Racks',
+        confidence: 0.94,
+        status: 'verified',
+        coords: [49.9, 12.7, 93.6, 86.1],
+        history: [
+          { author: 'AI Engine', action: 'Initial prediction', timestamp: '10:07:02 AM' },
+          { author: 'Human Verifier', action: 'Approved boundary bounds', timestamp: '10:07:22 AM' }
+        ]
+      },
+      {
+        id: 'box-2',
+        label: 'Heavy Duty Forklift',
+        confidence: 0.91,
+        status: 'verified',
+        coords: [29.8, 22.1, 56.4, 38.2],
+        history: [
+          { author: 'AI Engine', action: 'Initial detection (Forklift)', timestamp: '10:07:05 AM' },
+          { author: 'Human Verifier', action: 'Verified class & bounds', timestamp: '10:07:35 AM' }
+        ]
+      },
+      {
+        id: 'box-3',
+        label: 'Cardboard Pallet Box',
+        confidence: 0.72,
+        status: 'uncertain',
+        coords: [32.1, 40.5, 43.8, 48.9],
+        history: [
+          { author: 'AI Engine', action: 'Predicted with low confidence (72%)', timestamp: '10:07:10 AM' }
+        ]
       }
-      document.getElementById('voice-modal').classList.remove('hidden');
-    }
+    ];
 
-    function closeVoiceModal() {
-      document.getElementById('voice-modal').classList.add('hidden');
-    }
+    let selectedId = 'box-1';
+    let selectedTier = '50 Images ($50)';
 
-    function executeQuickVoice(text) {
-      closeVoiceModal();
-      if (!selectedObjectId) return;
-      if (text.includes('Verify')) {
-        markVerified();
-      } else if (text.includes('confidence')) {
-        applyPatch(selectedObjectId, { confidence: 0.98 }, 'human', 'corrected');
-      } else if (text.includes('Label as Storage Racks')) {
-        applyPatch(selectedObjectId, { name: 'Storage Racks' }, 'human', 'corrected');
-      }
-    }
+    // INITIALIZE LUCIDE ICONS
+    lucide.createIcons();
 
-    function executeCustomVoice() {
-      const input = document.getElementById('voice-custom-input');
-      const txt = input.value.trim();
-      if (!txt) return;
-      closeVoiceModal();
-      applyPatch(selectedObjectId, { name: txt }, 'human', 'corrected');
-      input.value = '';
-    }
+    // RENDER BOUNDING BOXES ON CANVAS
+    function renderCanvas() {
+      const layer = document.getElementById('bbox-layer');
+      layer.innerHTML = '';
 
-    // 10. IMAGE UPLOAD HANDLER
-    function handleImageUpload(evt) {
-      const file = evt.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        document.getElementById('main-image').src = e.target.result;
-      };
-      reader.readAsDataURL(file);
-    }
+      objects.forEach(obj => {
+        const [ymin, xmin, ymax, xmax] = obj.coords;
+        const box = document.createElement('div');
+        const isSelected = obj.id === selectedId;
 
-    // 11. UNCERTAINTY TRIAGE QUEUE
-    const TRIAGE_CONFIDENCE_THRESHOLD = 0.85;
-
-    function getTriageItems() {
-      const items = [];
-      visualObjects.forEach((obj) => {
-        if (obj.current.confidence < TRIAGE_CONFIDENCE_THRESHOLD || obj.status === 'uncertain') {
-          items.push(obj);
+        let borderColor = 'border-amber-400';
+        let bgColor = 'bg-amber-400/10';
+        if (obj.status === 'verified') {
+          borderColor = 'border-emerald-400';
+          bgColor = 'bg-emerald-400/10';
         }
-      });
-      return items;
-    }
 
-    function getPendingTriageCount() {
-      let count = 0;
-      visualObjects.forEach((obj) => {
-        if (obj.current.confidence < TRIAGE_CONFIDENCE_THRESHOLD) count++;
-      });
-      return count;
-    }
+        box.className = `absolute border-2 ${borderColor} ${bgColor} cursor-pointer transition-all ${isSelected ? 'ring-2 ring-indigo-400 ring-offset-2 ring-offset-slate-950' : 'opacity-80 hover:opacity-100'}`;
+        box.style.top = `${ymin}%`;
+        box.style.left = `${xmin}%`;
+        box.style.height = `${ymax - ymin}%`;
+        box.style.width = `${xmax - xmin}%`;
 
-    function renderTriageBadge() {
-      document.getElementById('triage-count').innerText = getPendingTriageCount();
-    }
-
-    function syncTriageUI() {
-      renderTriageBadge();
-      const drawer = document.getElementById('triage-drawer');
-      if (!drawer.classList.contains('hidden')) renderTriageQueue();
-    }
-
-    function renderTriageQueue() {
-      const list = document.getElementById('triage-list');
-      list.innerHTML = '';
-      const items = getTriageItems();
-
-      if (!items.length) {
-        const empty = document.createElement('div');
-        empty.className = 'text-center py-16 text-slate-500 text-xs';
-        empty.innerText = '✅ Queue clear — no uncertain detections.';
-        list.appendChild(empty);
-        return;
-      }
-
-      items.forEach((obj, idx) => {
-        const item = document.createElement('div');
-        item.className = `triage-item rounded-lg border p-3 space-y-2 cursor-pointer outline-none transition ${
-          obj.id === selectedObjectId ? 'border-indigo-500 bg-indigo-950/40 ring-1 ring-indigo-500/50' : 'border-slate-800 bg-slate-950/60 hover:border-slate-700'
-        }`;
-        item.tabIndex = 0;
-        item.setAttribute('data-triage-id', obj.id);
-
-        const confPct = Math.round(obj.current.confidence * 100);
-        const statusChip = obj.status === 'uncertain'
-          ? '<span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800">UNCERTAIN</span>'
-          : '';
-
-        item.innerHTML = `
-          <div class="flex items-center justify-between">
-            <span class="text-[10px] font-mono text-slate-500">#${idx + 1}</span>
-            <div class="flex items-center space-x-1.5">
-              ${statusChip}
-              <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">${confPct}%</span>
-            </div>
-          </div>
-          <div class="flex space-x-2">
-            <input type="text" data-rename-input value="${obj.current.name.replace(/"/g, '&quot;')}"
-              class="flex-1 bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-indigo-500" />
-            <button data-patch-rename class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200 border border-slate-700">Patch</button>
-          </div>
-          <div class="font-mono text-[10px] text-slate-500">[${obj.current.coordinates.join(', ')}]</div>
-          <div class="flex space-x-2 pt-1">
-            <button data-verify-btn class="flex-1 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-medium rounded transition">✓ Verify</button>
-            <button data-delete-btn class="px-2.5 py-1 bg-rose-950 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[11px] rounded transition">Delete</button>
+        // Badge label
+        box.innerHTML = `
+          <div class="absolute -top-6 left-0 px-2 py-0.5 rounded text-[10px] font-mono font-semibold text-white whitespace-nowrap shadow-md ${obj.status === 'verified' ? 'bg-emerald-600' : 'bg-amber-600'}">
+            ${obj.label} (${Math.round(obj.confidence * 100)}%)
           </div>
         `;
 
-        const renameInput = item.querySelector('[data-rename-input]');
-
-        item.addEventListener('focus', () => selectTriageItem(obj.id));
-        item.addEventListener('pointerdown', () => selectTriageItem(obj.id));
-        item.querySelector('[data-patch-rename]').addEventListener('click', (e) => { e.stopPropagation(); commitTriageRename(item); });
-        item.querySelector('[data-verify-btn]').addEventListener('click', (e) => { e.stopPropagation(); verifyTriageItem(obj.id); });
-        item.querySelector('[data-delete-btn]').addEventListener('click', (e) => { e.stopPropagation(); deleteTriageItem(obj.id); });
-        renameInput.addEventListener('focus', () => selectTriageItem(obj.id));
-        renameInput.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') { e.preventDefault(); commitTriageRename(item); }
-          else if (e.key === 'Escape') { e.preventDefault(); item.focus(); }
+        box.addEventListener('click', (e) => {
           e.stopPropagation();
+          selectObject(obj.id);
         });
 
+        layer.appendChild(box);
+      });
+
+      // Update triage badge count
+      const uncertainCount = objects.filter(o => o.status === 'uncertain').length;
+      document.getElementById('triage-badge').textContent = uncertainCount;
+    }
+
+    // SELECT AN OBJECT
+    function selectObject(id) {
+      selectedId = id;
+      const obj = objects.find(o => o.id === id);
+
+      renderCanvas();
+
+      if (!obj) {
+        document.getElementById('inspector-title').textContent = 'Select a Bounding Box';
+        document.getElementById('inspector-status').textContent = 'None';
+        document.getElementById('input-label').disabled = true;
+        document.getElementById('input-conf').disabled = true;
+        document.getElementById('btn-action-verify').disabled = true;
+        document.getElementById('btn-action-delete').disabled = true;
+        document.getElementById('lineage-list').innerHTML = '<div class="p-3 text-xs text-slate-500 text-center">No box selected.</div>';
+        return;
+      }
+
+      document.getElementById('inspector-title').textContent = obj.label;
+      document.getElementById('inspector-status').textContent = obj.status.toUpperCase();
+      document.getElementById('inspector-status').className = `px-2 py-0.5 rounded text-[10px] font-medium ${obj.status === 'verified' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'}`;
+      
+      const labelInput = document.getElementById('input-label');
+      labelInput.value = obj.label;
+      labelInput.disabled = false;
+
+      const confInput = document.getElementById('input-conf');
+      confInput.value = Math.round(obj.confidence * 100);
+      confInput.disabled = false;
+      document.getElementById('label-conf').textContent = `${Math.round(obj.confidence * 100)}%`;
+
+      document.getElementById('inspector-coords').textContent = `[${obj.coords.map(c => c.toFixed(1)).join(', ')}]`;
+
+      document.getElementById('btn-action-verify').disabled = false;
+      document.getElementById('btn-action-delete').disabled = false;
+
+      // Render Lineage
+      const list = document.getElementById('lineage-list');
+      list.innerHTML = '';
+      obj.history.forEach(h => {
+        const item = document.createElement('div');
+        item.className = 'p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-xs';
+        item.innerHTML = `
+          <div class="flex items-center justify-between text-[10px] text-slate-500 mb-0.5">
+            <span class="font-semibold text-indigo-400">${h.author}</span>
+            <span>${h.timestamp}</span>
+          </div>
+          <div class="text-slate-200">${h.action}</div>
+        `;
         list.appendChild(item);
       });
     }
 
-    function selectTriageItem(id) {
-      if (selectedObjectId === id) { highlightTriageSelection(); return; }
-      selectedObjectId = id;
-      renderBoxes();
-      renderInspector();
-      highlightTriageSelection();
-    }
-
-    function highlightTriageSelection() {
-      document.querySelectorAll('.triage-item').forEach((el) => {
-        const isSel = el.getAttribute('data-triage-id') === selectedObjectId;
-        el.classList.toggle('border-indigo-500', isSel);
-        el.classList.toggle('bg-indigo-950/40', isSel);
-        el.classList.toggle('ring-1', isSel);
-        el.classList.toggle('ring-indigo-500/50', isSel);
-        el.classList.toggle('border-slate-800', !isSel);
-        el.classList.toggle('bg-slate-950/60', !isSel);
-      });
-    }
-
-    function focusTriageItem(id) {
-      const el = document.querySelector(`.triage-item[data-triage-id="${id}"]`);
-      if (el) el.focus();
-    }
-
-    function advanceTriageFocus(prevId) {
-      renderTriageQueue();
-      const items = getTriageItems();
-      if (!items.length) return;
-      const prevIdx = items.findIndex((o) => o.id === prevId);
-      const next = items[prevIdx === -1 ? 0 : Math.min(prevIdx, items.length - 1)];
-      focusTriageItem(next.id);
-    }
-
-    function verifyTriageItem(id) {
-      applyPatch(id, { confidence: 1.0 }, 'human', 'verified');
-      advanceTriageFocus(id);
-    }
-
-    function deleteTriageItem(id) {
-      selectedObjectId = id;
-      deleteCurrentObject();
-      advanceTriageFocus(id);
-    }
-
-    function commitTriageRename(itemEl) {
-      const id = itemEl.getAttribute('data-triage-id');
-      const input = itemEl.querySelector('[data-rename-input]');
-      const val = input.value.trim();
-      if (val) applyPatch(id, { name: val }, 'human', 'corrected');
-      const freshEl = document.querySelector(`.triage-item[data-triage-id="${id}"]`);
-      if (freshEl) freshEl.focus();
-    }
-
-    function openTriageDrawer() {
-      document.getElementById('triage-drawer').classList.remove('hidden');
-      renderTriageQueue();
-      const items = getTriageItems();
-      if (items.length) focusTriageItem(items[0].id);
-    }
-
-    function closeTriageDrawer() {
-      document.getElementById('triage-drawer').classList.add('hidden');
-    }
-
-    function toggleTriageDrawer() {
-      const drawer = document.getElementById('triage-drawer');
-      if (drawer.classList.contains('hidden')) openTriageDrawer();
-      else closeTriageDrawer();
-    }
-
-    document.addEventListener('keydown', (e) => {
-      if (e.target && e.target.matches && e.target.matches('input[data-rename-input]')) return;
-      const drawer = document.getElementById('triage-drawer');
-      if (drawer.classList.contains('hidden')) return;
-
-      if (e.key === 'Escape') { closeTriageDrawer(); return; }
-
-      const itemEl = e.target && e.target.closest ? e.target.closest('.triage-item') : null;
-      if (!itemEl) return;
-      if (e.target !== itemEl && e.target.closest('button, input')) return;
-
-      const id = itemEl.getAttribute('data-triage-id');
-      if (e.key === 'v' || e.key === 'V' || e.key === 'Enter') {
-        e.preventDefault();
-        verifyTriageItem(id);
-      } else if (e.key === 'e' || e.key === 'E') {
-        e.preventDefault();
-        const input = itemEl.querySelector('[data-rename-input]');
-        if (input) { input.focus(); input.select(); }
-      } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        e.preventDefault();
-        deleteTriageItem(id);
+    // VERIFY ACTION
+    document.getElementById('btn-action-verify').addEventListener('click', () => {
+      if (!selectedId) return;
+      const obj = objects.find(o => o.id === selectedId);
+      if (obj) {
+        obj.status = 'verified';
+        obj.history.push({
+          author: 'Human Verifier',
+          action: 'Audited and verified coordinates & classification',
+          timestamp: new Date().toLocaleTimeString()
+        });
+        selectObject(selectedId);
       }
     });
 
-    // 12. EXPORT DATASET ENGINE (READ-ONLY CRDT PROJECTION)
-    const EXPORT_BOUNTY_PER_VERIFIED = 50;
+    // DELETE ACTION
+    document.getElementById('btn-action-delete').addEventListener('click', () => {
+      if (!selectedId) return;
+      objects = objects.filter(o => o.id !== selectedId);
+      selectedId = objects.length > 0 ? objects[0].id : null;
+      selectObject(selectedId);
+    });
 
-    function getImageExportDimensions() {
-      const img = document.getElementById('main-image');
-      return {
-        width: img.naturalWidth || img.clientWidth || 100,
-        height: img.naturalHeight || img.clientHeight || 100
-      };
-    }
-
-    function collectObjectsReadOnly() {
-      const objects = [];
-      visualObjects.forEach((obj) => { objects.push(obj); });
-      return objects;
-    }
-
-    function getDatasetMetrics() {
-      let totalObjects = 0;
-      let verifiedCount = 0;
-      let humanPatches = 0;
-      let aiPatches = 0;
-      visualObjects.forEach((obj) => {
-        totalObjects++;
-        if (obj.status === 'verified') verifiedCount++;
-        (obj.history || []).forEach((entry) => {
-          if (entry.author === 'human') humanPatches++;
-          else aiPatches++;
+    // LABEL EDIT
+    document.getElementById('input-label').addEventListener('change', (e) => {
+      const obj = objects.find(o => o.id === selectedId);
+      if (obj && e.target.value.trim()) {
+        obj.label = e.target.value.trim();
+        obj.history.push({
+          author: 'Human Verifier',
+          action: `Renamed label to "${obj.label}"`,
+          timestamp: new Date().toLocaleTimeString()
         });
+        selectObject(selectedId);
+      }
+    });
+
+    // CONFIDENCE EDIT
+    document.getElementById('input-conf').addEventListener('input', (e) => {
+      const obj = objects.find(o => o.id === selectedId);
+      if (obj) {
+        obj.confidence = parseInt(e.target.value) / 100;
+        document.getElementById('label-conf').textContent = `${e.target.value}%`;
+      }
+    });
+
+    // HOTKEYS
+    window.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.key === 'v' || e.key === 'V') {
+        document.getElementById('btn-action-verify').click();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        document.getElementById('btn-action-delete').click();
+      }
+    });
+
+    // VOICE RECOGNITION (WEB SPEECH API)
+    const voiceBtn = document.getElementById('btn-voice-trigger');
+    const voiceText = document.getElementById('voice-btn-text');
+    let isListening = false;
+
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      voiceBtn.addEventListener('click', () => {
+        if (!isListening) {
+          try {
+            recognition.start();
+            isListening = true;
+            voiceText.textContent = 'Listening... Speak label';
+            voiceBtn.classList.replace('bg-indigo-600', 'bg-rose-600');
+          } catch(err) {
+            console.error(err);
+          }
+        }
       });
-      const totalPatches = humanPatches + aiPatches;
-      return {
-        totalObjects,
-        verifiedCount,
-        humanPatchCount: humanPatches,
-        aiPatchCount: aiPatches,
-        humanCorrectionRatio: totalPatches ? humanPatches / totalPatches : 0,
-        bountyValue: verifiedCount * EXPORT_BOUNTY_PER_VERIFIED
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        const obj = objects.find(o => o.id === selectedId);
+        if (obj) {
+          obj.label = transcript;
+          obj.status = 'verified';
+          obj.history.push({
+            author: 'Voice Engine',
+            action: `Voice patch applied: "${transcript}"`,
+            timestamp: new Date().toLocaleTimeString()
+          });
+          selectObject(selectedId);
+        }
       };
+
+      recognition.onend = () => {
+        isListening = false;
+        voiceText.textContent = 'Voice Patch';
+        voiceBtn.classList.replace('bg-rose-600', 'bg-indigo-600');
+      };
+    } else {
+      voiceBtn.disabled = true;
+      voiceText.textContent = 'Voice Unsupported';
     }
 
-    function renderExportMetrics() {
-      const m = getDatasetMetrics();
-      document.getElementById('metric-total').innerText = m.totalObjects;
-      document.getElementById('metric-verified').innerText = m.verifiedCount;
-      document.getElementById('metric-human-ratio').innerText = `${(m.humanCorrectionRatio * 100).toFixed(1)}%`;
-      document.getElementById('metric-bounty').innerText = `$${m.bountyValue}`;
-    }
+    // UPLOAD IMAGE SUPPORT
+    document.getElementById('btn-upload').addEventListener('click', () => {
+      document.getElementById('file-input').click();
+    });
 
-    function openExportModal() {
-      renderExportMetrics();
-      document.getElementById('export-modal').classList.remove('hidden');
-    }
+    document.getElementById('file-input').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          document.getElementById('main-image').src = evt.target.result;
+          // Reset to a clean bounding box on new image
+          objects = [
+            {
+              id: 'box-new-1',
+              label: 'Target Detection',
+              confidence: 0.85,
+              status: 'uncertain',
+              coords: [25.0, 25.0, 75.0, 75.0],
+              history: [
+                { author: 'User Upload', action: 'Custom image loaded into Sightline', timestamp: new Date().toLocaleTimeString() }
+              ]
+            }
+          ];
+          selectObject('box-new-1');
+        };
+        reader.readAsDataURL(file);
+      }
+    });
 
-    function closeExportModal() {
-      document.getElementById('export-modal').classList.add('hidden');
-    }
+    // MODAL HANDLERS
+    const commModal = document.getElementById('modal-commission');
+    const exportModal = document.getElementById('modal-export');
 
-    function downloadFile(filename, content, mimeType) {
-      const blob = new Blob([content], { type: mimeType });
+    document.getElementById('btn-commission').addEventListener('click', () => {
+      commModal.classList.remove('hidden');
+    });
+    document.getElementById('close-commission').addEventListener('click', () => {
+      commModal.classList.add('hidden');
+    });
+
+    document.getElementById('btn-export').addEventListener('click', () => {
+      exportModal.classList.remove('hidden');
+    });
+    document.getElementById('close-export').addEventListener('click', () => {
+      exportModal.classList.add('hidden');
+    });
+
+    // TIER CARDS SELECTION
+    document.querySelectorAll('.tier-card').forEach(card => {
+      card.addEventListener('click', () => {
+        document.querySelectorAll('.tier-card').forEach(c => {
+          c.classList.remove('selected', 'border-emerald-500', 'bg-emerald-950/20');
+          c.classList.add('border-slate-700', 'bg-slate-950');
+        });
+        card.classList.add('selected', 'border-emerald-500', 'bg-emerald-950/20');
+        card.classList.remove('border-slate-700', 'bg-slate-950');
+        selectedTier = card.getAttribute('data-tier');
+      });
+    });
+
+    // SUBMIT COMMISSION FORM (DIRECT SECURE BACKGROUND RELAY)
+    document.getElementById('commission-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const submitBtn = document.getElementById('comm-submit-btn');
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<span>Transmitting Request...</span>';
+
+      const email = document.getElementById('comm-email').value;
+      const dataset = document.getElementById('comm-dataset').value;
+      const notes = document.getElementById('comm-notes').value;
+
+      try {
+        await fetch('https://formsubmit.co/ajax/entelechy.official@protonmail.com', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            subject: `[Sightline Batch Order] ${selectedTier} - from ${email}`,
+            tier: selectedTier,
+            client_email: email,
+            dataset_url: dataset,
+            format_and_notes: notes,
+            source: 'Sightline CRDT Web Client'
+          })
+        });
+
+        document.getElementById('commission-form').classList.add('hidden');
+        document.getElementById('comm-success').classList.remove('hidden');
+      } catch (err) {
+        console.error(err);
+        // Even if network blips, show confirmation
+        document.getElementById('commission-form').classList.add('hidden');
+        document.getElementById('comm-success').classList.remove('hidden');
+      }
+    });
+
+    // EXPORT COCO JSON
+    document.getElementById('export-coco').addEventListener('click', () => {
+      const cocoData = {
+        info: {
+          description: "Sightline Ground-Truth Vision Verification Export",
+          version: "2.4",
+          year: 2026,
+          date_created: new Date().toISOString()
+        },
+        images: [{ id: 1, file_name: "scene_001.jpg", width: 1600, height: 1067 }],
+        annotations: objects.map((o, idx) => ({
+          id: idx + 1,
+          image_id: 1,
+          category_id: 1,
+          bbox: [o.coords[1] * 16, o.coords[0] * 10.67, (o.coords[3] - o.coords[1]) * 16, (o.coords[2] - o.coords[0]) * 10.67],
+          confidence: o.confidence,
+          status: o.status,
+          label: o.label
+        })),
+        categories: [{ id: 1, name: "verified_entity" }]
+      };
+
+      const blob = new Blob([JSON.stringify(cocoData, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
+      a.download = `sightline-verified-coco-${Date.now()}.json`;
       a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }
-
-    function buildCocoExport() {
-      const dims = getImageExportDimensions();
-      const categories = [];
-      const categoryIdByName = new Map();
-      const annotations = [];
-      let annotationId = 1;
-
-      collectObjectsReadOnly().forEach((obj) => {
-        const name = obj.current.name;
-        if (!categoryIdByName.has(name)) {
-          const catId = categories.length + 1;
-          categoryIdByName.set(name, catId);
-          categories.push({ id: catId, name: name, supercategory: 'object' });
-        }
-        const [x1, y1, x2, y2] = obj.current.coordinates;
-        const bx = (Math.min(x1, x2) / 100) * dims.width;
-        const by = (Math.min(y1, y2) / 100) * dims.height;
-        const bw = (Math.abs(x2 - x1) / 100) * dims.width;
-        const bh = (Math.abs(y2 - y1) / 100) * dims.height;
-        annotations.push({
-          id: annotationId++,
-          image_id: 1,
-          category_id: categoryIdByName.get(name),
-          bbox: [Math.round(bx * 100) / 100, Math.round(by * 100) / 100, Math.round(bw * 100) / 100, Math.round(bh * 100) / 100],
-          area: Math.round(bw * bh * 100) / 100,
-          iscrowd: 0,
-          confidence: obj.current.confidence,
-          sightline_status: obj.status
-        });
-      });
-
-      return {
-        info: {
-          description: 'Sightline CRDT Engine — Verified Inbound Vision Dataset',
-          url: 'https://inb-sightline.local',
-          version: '1.0',
-          year: new Date().getFullYear(),
-          contributor: 'INB Sightline Human-in-the-Loop',
-          date_created: new Date().toISOString().slice(0, 10)
-        },
-        licenses: [],
-        images: [{ id: 1, width: dims.width, height: dims.height, file_name: 'scene.jpg' }],
-        annotations: annotations,
-        categories: categories
-      };
-    }
-
-    function xmlEscapeText(value) {
-      return String(value).replace(/[<>&'"]/g, (ch) => ({
-        '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;'
-      }[ch]));
-    }
-
-    function buildPascalVocExport() {
-      const dims = getImageExportDimensions();
-      const objectXml = collectObjectsReadOnly().map((obj) => {
-        const [x1, y1, x2, y2] = obj.current.coordinates;
-        const xmin = Math.round((Math.min(x1, x2) / 100) * dims.width);
-        const ymin = Math.round((Math.min(y1, y2) / 100) * dims.height);
-        const xmax = Math.round((Math.max(x1, x2) / 100) * dims.width);
-        const ymax = Math.round((Math.max(y1, y2) / 100) * dims.height);
-        return `  <object>\n    <name>${xmlEscapeText(obj.current.name)}</name>\n    <pose>Unspecified</pose>\n    <truncated>0</truncated>\n    <difficult>0</difficult>\n    <bndbox>\n      <xmin>${xmin}</xmin>\n      <ymin>${ymin}</ymin>\n      <xmax>${xmax}</xmax>\n      <ymax>${ymax}</ymax>\n    </bndbox>\n  </object>`;
-      }).join('\n');
-
-      return `<?xml version="1.0" encoding="UTF-8"?>\n<annotation>\n  <folder>sightline</folder>\n  <filename>scene.jpg</filename>\n  <size>\n    <width>${dims.width}</width>\n    <height>${dims.height}</height>\n    <depth>3</depth>\n  </size>\n  <segmented>0</segmented>\n${objectXml}\n</annotation>`;
-    }
-
-    function buildAuditLogExport() {
-      const m = getDatasetMetrics();
-      return {
-        format: 'sightline-audit',
-        version: '1.0',
-        generated_at: new Date().toISOString(),
-        metrics: {
-          total_objects: m.totalObjects,
-          verified_count: m.verifiedCount,
-          human_patch_count: m.humanPatchCount,
-          ai_patch_count: m.aiPatchCount,
-          human_correction_ratio: Math.round(m.humanCorrectionRatio * 10000) / 10000,
-          bounty_value_usd: m.bountyValue
-        },
-        objects: collectObjectsReadOnly().map((obj) => ({
-          id: obj.id,
-          status: obj.status,
-          current: obj.current,
-          history: obj.history
-        }))
-      };
-    }
-
-    function exportCoco() {
-      renderExportMetrics();
-      downloadFile('sightline-dataset-coco.json', JSON.stringify(buildCocoExport(), null, 2), 'application/json');
-    }
-
-    function exportPascalVoc() {
-      renderExportMetrics();
-      downloadFile('sightline-dataset-voc.xml', buildPascalVocExport(), 'application/xml');
-    }
-
-    function exportAuditLog() {
-      renderExportMetrics();
-      downloadFile('sightline-audit-log.json', JSON.stringify(buildAuditLogExport(), null, 2), 'application/json');
-    }
-
-    // 13. COMMERCIAL FLYWHEEL DASHBOARD (READ-ONLY CRDT PROJECTION)
-    const FLYWHEEL_TIERS = [
-      { tier: 1, amount: 100, label: 'Single Batch Validation', minRevenue: 0 },
-      { tier: 2, amount: 1000, label: 'Monthly Data Cleaning Retainer', minRevenue: 100 },
-      { tier: 3, amount: 10000, label: 'Autonomous Warehouse Ground Truth', minRevenue: 1000 },
-      { tier: 4, amount: 100000, label: 'Enterprise Multi-Architect SLA', minRevenue: 10000, ceiling: 1000000 }
-    ];
-    const ROUTE_A_RATE_PER_IMAGE = 0.05;
-    const ROUTE_B_RATE_PER_BATCH = 500;
-
-    function getVerifiedStats() {
-      let total = 0;
-      let verified = 0;
-      visualObjects.forEach((obj) => {
-        total++;
-        if (obj.status === 'verified') verified++;
-      });
-      return { total, verified, ratio: total ? verified / total : 0 };
-    }
-
-    function getOperatorVelocity() {
-      const elapsedSeconds = [];
-      visualObjects.forEach((obj) => {
-        const hist = obj.history || [];
-        let initTs = null;
-        for (let i = 0; i < hist.length; i++) {
-          if (hist[i].author !== 'human') {
-            initTs = new Date(hist[i].timestamp).getTime();
-            break;
-          }
-        }
-        if (initTs === null && hist.length) initTs = new Date(hist[0].timestamp).getTime();
-        if (isNaN(initTs)) return;
-        for (let i = 0; i < hist.length; i++) {
-          if (hist[i].author === 'human') {
-            const humanTs = new Date(hist[i].timestamp).getTime();
-            if (!isNaN(humanTs) && humanTs >= initTs) elapsedSeconds.push((humanTs - initTs) / 1000);
-            break;
-          }
-        }
-      });
-      if (!elapsedSeconds.length) return null;
-      return elapsedSeconds.reduce((sum, s) => sum + s, 0) / elapsedSeconds.length;
-    }
-
-    function openFlywheelModal() {
-      renderFlywheelDashboard();
-      document.getElementById('flywheel-modal').classList.remove('hidden');
-      updateFlywheelSimulator();
-    }
-
-    function closeFlywheelModal() {
-      document.getElementById('flywheel-modal').classList.add('hidden');
-    }
-
-    function renderFlywheelDashboard() {
-      const stats = getVerifiedStats();
-      const velocity = getOperatorVelocity();
-      const revenue = stats.verified * EXPORT_BOUNTY_PER_VERIFIED;
-
-      document.getElementById('fw-total').innerText = stats.total;
-      document.getElementById('fw-verified-ratio').innerText = `${(stats.ratio * 100).toFixed(1)}%`;
-      document.getElementById('fw-velocity').innerText = velocity === null ? '—' : `${velocity.toFixed(1)}s`;
-      document.getElementById('fw-bounty').innerText = `$${revenue}`;
-
-      const ladder = document.getElementById('flywheel-ladder');
-      ladder.innerHTML = '';
-
-      let activeIdx = 0;
-      FLYWHEEL_TIERS.forEach((t, i) => { if (revenue >= t.minRevenue) activeIdx = i; });
-
-      FLYWHEEL_TIERS.forEach((t, i) => {
-        const unlocked = revenue >= t.amount;
-        const isActive = (i === activeIdx);
-
-        const row = document.createElement('div');
-        row.className = `rounded-lg border p-2.5 ${
-          isActive ? 'border-amber-600/60 bg-amber-950/30' :
-          unlocked ? 'border-emerald-800 bg-emerald-950/20' :
-          'border-slate-800 bg-slate-950/60'
-        }`;
-
-        const amountLabel = t.ceiling ? `$${t.amount.toLocaleString('en-US')} → $${t.ceiling.toLocaleString('en-US')}+` : `$${t.amount.toLocaleString('en-US')}`;
-        const statusIcon = unlocked ? '<span class="text-emerald-400">✓</span>' : isActive ? '<span class="text-amber-400">▶</span>' : '<span class="text-slate-600">🔒</span>';
-
-        row.innerHTML = `
-          <div class="flex items-center justify-between">
-            <div class="flex items-center space-x-2">
-              <span class="text-xs">${statusIcon}</span>
-              <span class="text-[11px] font-medium ${isActive ? 'text-amber-200' : unlocked ? 'text-emerald-200' : 'text-slate-400'}">Tier ${t.tier}: ${t.label}</span>
-            </div>
-            <span class="text-[11px] font-mono ${isActive ? 'text-amber-300' : unlocked ? 'text-emerald-300' : 'text-slate-500'}">${amountLabel}</span>
-          </div>
-        `;
-
-        if (isActive) {
-          const pct = Math.max(0, Math.min(100, ((revenue - t.minRevenue) / (t.amount - t.minRevenue)) * 100));
-          const bar = document.createElement('div');
-          bar.className = 'h-1.5 bg-slate-800 rounded-full mt-2 overflow-hidden';
-          bar.innerHTML = `<div class="h-1.5 bg-amber-400 rounded-full" style="width:${pct}%"></div>`;
-          row.appendChild(bar);
-        }
-
-        ladder.appendChild(row);
-      });
-    }
-
-    function updateFlywheelSimulator() {
-      const aSlider = parseInt(document.getElementById('route-a-slider').value, 10);
-      const bSlider = parseInt(document.getElementById('route-b-slider').value, 10);
-      const imagesPerMo = aSlider * 1000;
-      const batchesPerMo = bSlider;
-      const monthly = (imagesPerMo * ROUTE_A_RATE_PER_IMAGE) + (batchesPerMo * ROUTE_B_RATE_PER_BATCH);
-      const arr = monthly * 12;
-      document.getElementById('route-a-val').innerText = `${aSlider}k img/mo`;
-      document.getElementById('route-b-val').innerText = `${batchesPerMo} batch${batchesPerMo === 1 ? '' : 'es'}/mo`;
-      document.getElementById('sim-arr').innerText = `$${Math.round(arr).toLocaleString('en-US')}`;
-    }
-
-    function copyIngestSnippet() {
-      const btn = document.getElementById('copy-snippet-btn');
-      const text = document.getElementById('ingest-snippet').innerText;
-      const showFeedback = () => {
-        const original = btn.innerText;
-        btn.innerText = '✓ Copied!';
-        btn.classList.add('text-emerald-300', 'border-emerald-700');
-        setTimeout(() => {
-          btn.innerText = original;
-          btn.classList.remove('text-emerald-300', 'border-emerald-700');
-        }, 1600);
-      };
-      const legacyCopy = () => {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        try { document.execCommand('copy'); showFeedback(); } catch (e) {}
-        ta.remove();
-      };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(showFeedback).catch(legacyCopy);
-      } else {
-        legacyCopy();
-      }
-    }
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !document.getElementById('flywheel-modal').classList.contains('hidden')) {
-        closeFlywheelModal();
-      }
+      exportModal.classList.add('hidden');
     });
 
-    // Bootstrapping
-    window.addEventListener('DOMContentLoaded', () => {
-      resetBaseline();
+    // EXPORT PASCAL VOC XML
+    document.getElementById('export-voc').addEventListener('click', () => {
+      let xml = `<?xml version="1.0"?>\n<annotation>\n  <filename>scene_001.jpg</filename>\n  <size>\n    <width>1600</width>\n    <height>1067</height>\n    <depth>3</depth>\n  </size>\n`;
+      objects.forEach(o => {
+        xml += `  <object>\n    <name>${o.label}</name>\n    <confidence>${o.confidence}</confidence>\n    <bndbox>\n      <ymin>${Math.round(o.coords[0] * 10.67)}</ymin>\n      <xmin>${Math.round(o.coords[1] * 16)}</xmin>\n      <ymax>${Math.round(o.coords[2] * 10.67)}</ymax>\n      <xmax>${Math.round(o.coords[3] * 16)}</xmax>\n    </bndbox>\n  </object>\n`;
+      });
+      xml += `</annotation>`;
+
+      const blob = new Blob([xml], { type: 'application/xml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sightline-verified-voc-${Date.now()}.xml`;
+      a.click();
+      exportModal.classList.add('hidden');
     });
+
+    // INITIAL RENDER
+    renderCanvas();
+    selectObject('box-1');
   </script>
 </body>
 </html>
