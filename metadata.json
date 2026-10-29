@@ -1,0 +1,6 @@
+{
+  "name": "INB Sightline - Collaborative AI Visual CRDT Platform",
+  "description": "Zero-cost real-time visual object correction and verification engine with Yjs CRDT synchronization, multi-architect audit trails, and voice/hover patch pipeline.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
